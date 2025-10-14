@@ -1,199 +1,196 @@
 #!/usr/bin/env python3
 """
-Animal Crossing Orchard Automation via NXBT (Bluetooth)
-Start avatar: bottom-right tree base, facing north.
-Press ENTER to begin once you're ready in-game.
+ACNH Orchard: per-tree shake & immediate pickup via NXBT (Bluetooth)
+
+Start: bottom-right tree, stand one tile to its RIGHT, facing LEFT.
+Flow:
+  - Row 1: move LEFT across 25 trees, per-tree: A, pick 3 fruits using gap tiles
+  - Row-advance (LEFT 1, UP 3, RIGHT 1)
+  - Row 2: move RIGHT across 25 trees (mirrored pattern)
+  - Repeat for 8 rows total (zig-zag)
 """
 
 import time
 import nxbt
 
 # =========================
-# TUNABLES
+# TUNABLES (seconds)
 # =========================
-# Base move timings
-WALK_TILE_S           = 0.60     # straight 1-tile travel when already facing that direction
-FACE_ONLY_S           = 0.165     # nudge long enough to change facing, not position
-FACE_NUDGE_S          = 0.05     # tiny "face forward" nudge at a tree
+WALK_TILE_S       = 0.275   # exact time to walk ONE in-game tile. Tune this first.
+A_HOLD_S          = 0.08   # hold for shake
+Y_HOLD_S          = 0.05   # hold to pick up
+SETTLE_S          = 1.06   # tiny pause after moves or presses
+FACE_NUDGE_S      = 0.16   # micro-nudge to “lock” facing before A
 
-# Shake timings
-PRESS_A_HOLD_S        = 0.06
-AFTER_SHAKE_PAUSE     = 0.20     # animation buffer before anything else
-POST_SHAKE_MOVE_DELAY = 2.00     # your requested 2.0s settle before stepping to next tree
+# Orchard geometry
+TREES_PER_ROW     = 25
+TREE_ROWS         = 8
+# Between-row offset: with one empty tile between tree rows → 3 tiles up to reach next row’s baseline
+ROW_UP_TILES      = 3
 
-# Step-to-next-tree timings when starting FACING NORTH
-# (longer than WALK_TILE_S because the avatar rotates + begins moving)
-LEFT_STEP_FROM_TREE_S  = 0.70
-RIGHT_STEP_FROM_TREE_S = 0.70
+# =========================
+# STICK VECTORS (NXBT: [-100,100])
+# =========================
+MAX = 100
+UP    = (0,  MAX)
+DOWN  = (0, -MAX)
+LEFT  = (-MAX, 0)
+RIGHT = ( MAX, 0)
 
-# Optional pick-up timings (not used if you’re only shaking right now)
-PRESS_Y_HOLD_S        = 0.04
-BEFORE_Y_TILE_S       = 0.04
-AFTER_Y_TILE_S        = 0.03
+def sleep_s(s):
+    if s > 0:
+        time.sleep(s)
 
-TREES_PER_ROW      = 25
-TREE_ROWS          = 8
-TILE_GAP_BETWEEN   = 1
-
-TILES_BETWEEN_TREES = 1 + TILE_GAP_BETWEEN  # 2 tiles between trunks center-to-center
-ROW_BASE_TILES      = ((TREES_PER_ROW - 1) * TILES_BETWEEN_TREES) + 1
-COL_BASE_TILES      = ((TREE_ROWS - 1) * TILES_BETWEEN_TREES) + 1
-
-STICK_MAX = 100
-UP    = (0,  STICK_MAX)
-DOWN  = (0, -STICK_MAX)
-LEFT  = (-STICK_MAX, 0)
-RIGHT = ( STICK_MAX, 0)
-
-def sleep_s(sec: float):
-    if sec > 0:
-        time.sleep(sec)
-
-class OrchardBot:
+class OrchardPerTree:
     def __init__(self):
         self.nx = nxbt.Nxbt()
-        self.cid = self.nx.create_controller(
-            nxbt.PRO_CONTROLLER,
-            reconnect_address=self.nx.get_switch_addresses()
-        )
-        print("Waiting for connection… Put Switch on 'Change Grip/Order' if needed.")
+        self.cid = self.nx.create_controller(nxbt.PRO_CONTROLLER,
+                                             reconnect_address=self.nx.get_switch_addresses())
+        print("Open 'Change Grip/Order' on the Switch if not already paired…")
         self.nx.wait_for_connection(self.cid)
-        print("Connected. Position your avatar at the bottom-right tree base.")
-        input("✅ Press ENTER to start the orchard harvesting automation...")
+        print("Connected. Place avatar at the RIGHT of the bottom-right tree, facing LEFT.")
+        input("Press ENTER to start…")
 
-    # ---------- Low-level inputs ----------
+    # ---- low-level helpers ----
+    def move(self, vec, seconds):
+        x, y = vec
+        self.nx.tilt_stick(self.cid, nxbt.Sticks.LEFT_STICK, x, y, tilted=seconds, released=0)
+
+    def move_tiles(self, vec, tiles):
+        for _ in range(tiles):
+            self.move(vec, WALK_TILE_S)
+
+    def face(self, vec):
+        # Small nudge to set facing without significant displacement
+        self.move(vec, FACE_NUDGE_S)
+
     def press_a(self):
-        self.nx.press_buttons(self.cid, [nxbt.Buttons.A], down=PRESS_A_HOLD_S, up=0)
+        self.nx.press_buttons(self.cid, [nxbt.Buttons.A])
 
     def press_y(self):
-        self.nx.press_buttons(self.cid, [nxbt.Buttons.Y], down=PRESS_Y_HOLD_S, up=0)
+        self.nx.press_buttons(self.cid, [nxbt.Buttons.Y])
 
-    def tilt(self, vec, sec, release=0.05):
-        x, y = vec
-        self.nx.tilt_stick(self.cid, nxbt.Sticks.LEFT_STICK, x, y, tilted=sec, released=release)
-
-    # ---------- Facing-only nudges (no pixel movement) ----------
-    def face_up_only(self):
-        self.tilt(UP, FACE_ONLY_S, release=0.00)
-
-    def face_down_only(self):
-        self.tilt(DOWN, FACE_ONLY_S, release=0.00)
-
-    def face_left_only(self):
-        self.tilt(LEFT, FACE_ONLY_S, release=0.00)
-
-    def face_right_only(self):
-        self.tilt(RIGHT, FACE_ONLY_S, release=0.00)
-
-    # ---------- Tile movement ----------
-    def move_tiles(self, vec, tiles: int):
-        for _ in range(tiles):
-            self.tilt(vec, WALK_TILE_S, release=0.00)
-
-    # ---------- Tree interaction ----------
-    def nudge_forward_at_tree(self):
-        # a tiny forward to ensure we’re 'engaged' with the tree
-        self.tilt(UP, FACE_NUDGE_S, release=0.00)
-
-    def shake_current_tree(self):
-        self.nudge_forward_at_tree()
+    # ---- per-tree patterns ----
+    def tree_cycle_leftward(self):
+        """
+        Preconditions:
+          - Standing ONE TILE to the RIGHT of current tree, facing LEFT.
+        Steps (your new plan):
+          1) Face left & shake (A). 3 fruits fall: left, down, right; we’re on the RIGHT fruit.
+          2) Pick Y (right fruit).
+          3) Move DOWN 1.
+          4) Move LEFT 2 → stand on second fruit; pick Y.
+          5) Move LEFT 1, then UP 1 → stand on third fruit; pick Y.
+          6) Re-align to the RIGHT of the NEXT tree to the left: move RIGHT 1; face LEFT.
+             (Net effect per-tree: advances to the next tree’s start position.)
+        """
+        # 1) shake
         self.press_a()
-        sleep_s(AFTER_SHAKE_PAUSE)
+        sleep_s(1.5)
 
-    # ---------- Step to adjacent tree when starting FACING NORTH ----------
-    def step_left_to_next_tree_from_treeface(self):
-        # after-shake settle you asked for
-        sleep_s(POST_SHAKE_MOVE_DELAY)
-        # move left to the next trunk (timing includes turn+move)
-        self.tilt(LEFT, LEFT_STEP_FROM_TREE_S, release=0.06)
-        # face north again without advancing
-        self.face_up_only()
+        # 2) pick right fruit (we already stand on it)
+        self.press_y()
+        sleep_s(0.5)
 
-    def step_right_to_next_tree_from_treeface(self):
-        sleep_s(POST_SHAKE_MOVE_DELAY)
-        self.tilt(RIGHT, RIGHT_STEP_FROM_TREE_S, release=0.06)
-        self.face_up_only()
+        # 3) down 1
+        self.face(DOWN)
+        self.move_tiles(DOWN, 1)
 
-    # ---------- Full row traversals ----------
-    def traverse_row_right_to_left(self):
-        # starting at rightmost tree, facing north
-        self.shake_current_tree()
-        for _ in range(1, TREES_PER_ROW):
-            self.step_left_to_next_tree_from_treeface()
-            self.shake_current_tree()
-
-    def traverse_row_left_to_right(self):
-        # starting at leftmost tree, facing north
-        self.shake_current_tree()
-        for _ in range(1, TREES_PER_ROW):
-            self.step_right_to_next_tree_from_treeface()
-            self.shake_current_tree()
-
-    # ---------- Row advances (between rows) ----------
-    # After finishing R->L, at LEFTMOST tree, facing north:
-    # face left + move 1, face north + move 3, face right + move 1, face north nudge
-    def advance_to_next_row_after_R2L(self):
-        self.face_left_only()
+        # 4) left 1 → second fruit; pick
+        self.face(LEFT)
         self.move_tiles(LEFT, 1)
-        self.face_up_only()
-        self.move_tiles(UP, 3)
-        self.face_right_only()
-        self.move_tiles(RIGHT, 1)
-        self.face_up_only()
+        self.press_y()
+        sleep_s(0.5)
 
-    # After finishing L->R, at RIGHTMOST tree, facing north:
-    # face right + move 1, face north + move 3, face left + move 1, face north nudge
-    def advance_to_next_row_after_L2R(self):
-        self.face_right_only()
-        self.move_tiles(RIGHT, 1)
-        self.face_up_only()
-        self.move_tiles(UP, 3)
-        self.face_left_only()
+        # 5) left 1, up 1 → third fruit; pick
         self.move_tiles(LEFT, 1)
-        self.face_up_only()
+        self.face(UP)
+        self.move_tiles(UP, 1)
+        self.press_y()
+        sleep_s(0.5)
 
-    # ---------- Phase 1: shake all rows with exact zig-zag ----------
-    def phase1_shake_all(self):
-        # Row 1 is RIGHT->LEFT from bottom-right start
-        go_left = True
-        for row in range(TREE_ROWS):
-            if go_left:
-                self.traverse_row_right_to_left()
-            else:
-                self.traverse_row_left_to_right()
+        # 6) align for NEXT tree to the left
+        self.face(LEFT)
 
-            if row == TREE_ROWS - 1:
-                break  # done after last row
+    def tree_cycle_rightward(self):
+        """
+        Mirror of leftward cycle.
+        Preconditions:
+          - Standing ONE TILE to the LEFT of current tree, facing RIGHT.
+        Mirror steps:
+          1) Face right & shake (A). We’re on the LEFT fruit.
+          2) Pick Y (left fruit).
+          3) Move DOWN 1.
+          4) Move RIGHT 2 → second fruit; pick Y.
+          5) Move RIGHT 1, then UP 1 → third fruit; pick Y.
+          6) Align to the LEFT of the NEXT tree to the right: move LEFT 1; face RIGHT.
+        """
+        self.face(RIGHT)
+        self.press_a()
 
-            # advance to next row based on which way we just traversed
-            if go_left:
-                self.advance_to_next_row_after_R2L()
-            else:
-                self.advance_to_next_row_after_L2R()
+        self.press_y()
 
-            go_left = not go_left
+        self.move_tiles(DOWN, 1)
+
+        self.move_tiles(RIGHT, 2)
+        self.press_y()
+
+        self.move_tiles(RIGHT, 1)
+        self.move_tiles(UP, 1)
+        self.press_y()
+
+        self.move_tiles(LEFT, 1)
+        self.face(RIGHT)
+
+    # ---- row logic ----
+    def row_leftward(self):
+        # At row start: to the RIGHT of first tree in this row, facing LEFT.
+        for i in range(TREES_PER_ROW):
+            self.tree_cycle_leftward()
+
+    def row_rightward(self):
+        # At row start: to the LEFT of first tree in this row, facing RIGHT.
+        for i in range(TREES_PER_ROW):
+            self.tree_cycle_rightward()
+
+    def row_advance_from_left_edge(self):
+        # When you end a leftward row: you’re on the far LEFT.
+        # As before: LEFT 1, UP 3, RIGHT 1.
+        self.move_tiles(LEFT, 1)
+        self.move_tiles(UP, ROW_UP_TILES)
+        self.move_tiles(RIGHT, 1)
+        # After this, for the next row (which is rightward),
+        # you should be one tile LEFT of the first tree, facing RIGHT.
+        self.face(RIGHT)
+
+    def row_advance_from_right_edge(self):
+        # When you end a rightward row: you’re on the far RIGHT.
+        # As before: RIGHT 1, UP 3, LEFT 1.
+        self.move_tiles(RIGHT, 1)
+        self.move_tiles(UP, ROW_UP_TILES)
+        self.move_tiles(LEFT, 1)
+        # Prepare facing LEFT for the next row.
+        self.face(LEFT)
 
     def run(self):
         try:
-            #self.phase1_shake_all()
-            # You can call your Phase 2/3 here after you’re happy with Phase 1 timing.
+            # Row 1: LEFTWARD (we start at right of the bottom-right tree)
+            self.row_leftward()
 
+            for r in range(1, TREE_ROWS):
+                if r % 2 == 1:
+                    # Just finished a LEFTWARD row (at left edge) → advance then go RIGHTWARD
+                    self.row_advance_from_left_edge()
+                    self.row_rightward()
+                else:
+                    # Just finished a RIGHTWARD row (at right edge) → advance then go LEFTWARD
+                    self.row_advance_from_right_edge()
+                    self.row_leftward()
 
-            self.tilt(UP, 5, release=0.00)
-
-            # t = 2
-            # while True:
-            #     self.face_up_only()
-            #     sleep_s(2)
-            #     self.face_left_only()
-            #     sleep_s(2)
-            #     self.face_down_only()
-            #     sleep_s(2)
-            #     self.face_right_only()
-            #     sleep_s(2)
+            print("✅ Finished all rows.")
         finally:
             self.nx.remove_controller(self.cid)
-            print("✅ Done. Controller shut down.")
+            print("Controller shut down.")
 
 if __name__ == "__main__":
-    OrchardBot().run()
+    OrchardPerTree().run()
