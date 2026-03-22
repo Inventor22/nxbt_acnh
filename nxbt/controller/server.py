@@ -305,7 +305,7 @@ class ControllerServer():
         connected_devices = []
         connected_devices_count = {}
         while self._crw_running:
-            paths = self.bt.find_connected_devices(alias_filter="Nintendo Switch")
+            paths = self.bt.find_connected_devices() # alias_filter="Nintendo Switch")
             # Keep track of Switches that connect
             if len(paths) > 0:
                 connected_devices = list(set(connected_devices + paths))
