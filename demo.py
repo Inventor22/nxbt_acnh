@@ -5,49 +5,6 @@ import nxbt
 from nxbt import Buttons
 from nxbt import Sticks
 
-MACRO = """
-LOOP 12
-    B 0.1s
-    0.1s
-1.5s
-DPAD_RIGHT 0.075s
-0.075s
-A 0.1s
-1.5s
-DPAD_DOWN 1.00s
-A 0.1s
-0.25s
-DPAD_DOWN 0.95s
-A 0.1s
-0.25s
-L_STICK_PRESS 0.1s
-1.0s
-L_STICK@-100+000 0.5s
-L_STICK@+000+100 0.5s
-L_STICK@+100+000 0.5s
-L_STICK@+000-100 0.5s
-B 0.1s
-0.25s
-R_STICK_PRESS 0.1s
-1.0s
-R_STICK@-100+000 0.5s
-R_STICK@+000+100 0.5s
-R_STICK@+100+000 0.5s
-R_STICK@+000-100 0.5s
-LOOP 4
-    B 0.1s
-    0.1s
-B 0.1s
-0.4s
-DPAD_LEFT 0.1s
-0.1s
-A 0.1s
-1.5s
-A 0.1s
-5.0s
-"""
-
-
 def random_colour():
 
     return [
@@ -83,16 +40,6 @@ if __name__ == "__main__":
     # Wait for the switch to connect to the controller
     nx.wait_for_connection(controller_idx)
 
-    # Run a macro on the last controller
-    # and don't wait for the macro to complete
-    print("Macro Started")
-    macro_id = nx.macro(controller_idx, MACRO, block=False)
-    time.sleep(3)
-    # Stop the macro
-    print("Stopping Macro")
-    nx.stop_macro(controller_idx, macro_id)
-    print("Stopped Macro")
-
     # Moving the selected home screen item two spaces to the right and back.
     nx.tilt_stick(controller_idx, Sticks.RIGHT_STICK, 100, 0,
                   tilted=0.25, released=0.25)
@@ -107,16 +54,6 @@ if __name__ == "__main__":
     nx.press_buttons(controller_idx, [Buttons.A])
     time.sleep(2)
     nx.press_buttons(controller_idx, [Buttons.A])
-    time.sleep(2)
-
-    # Enter the same macro, but block this time
-    print("Macro Started")
-    macro_id = nx.macro(controller_idx, MACRO)
-    print("Macro finished, going to the home screen...")
-
-    nx.press_buttons(controller_idx, [Buttons.B])
-    time.sleep(2)
-    nx.press_buttons(controller_idx, [Buttons.B])
     time.sleep(2)
 
     print("Exiting...")
